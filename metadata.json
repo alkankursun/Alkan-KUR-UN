@@ -1,0 +1,5 @@
+{
+  "name": "AutoLISP Master",
+  "description": "Yapay zeka destekli AutoCAD AutoLISP kod oluşturucu ve asistanı. İhtiyacınız olan komutu tarif edin, LISP kodunu anında alın.",
+  "requestFramePermissions": []
+}
