@@ -1,8 +1,6 @@
-
-
 import React from 'react';
 import { Message, MessageRole, LispSnippet } from '../types';
-import { Bot, User, Copy, Check, Wrench, BookOpen, Sparkles, ShieldCheck, Download, ArrowRight, Zap } from 'lucide-react';
+import { Bot, User, Copy, Check, Wrench, BookOpen, Sparkles, ShieldCheck, Download, Zap, FileText, FileCode, Image as ImageIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 interface MessageBubbleProps {
@@ -23,6 +21,44 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onCodeAct
   const isUser = message.role === MessageRole.User;
   const isLibrary = message.isLibraryResult;
   const isProposal = !!message.proposalSnippet;
+
+  const renderAttachment = (att: { name: string, mimeType: string, data: string }, idx: number) => {
+      const isImage = att.mimeType.startsWith('image/');
+      
+      if (isImage) {
+          return (
+              <img 
+                  key={idx} 
+                  src={att.data} 
+                  alt={att.name} 
+                  className="w-24 h-24 object-cover rounded-lg border border-white/20 hover:scale-105 transition-transform cursor-pointer bg-slate-900" 
+                  title={att.name}
+              />
+          );
+      }
+      
+      // Non-image rendering
+      let Icon = FileText;
+      let colorClass = "text-slate-300";
+      
+      if (att.mimeType === 'application/pdf') {
+          Icon = FileText; 
+          colorClass = "text-red-400";
+      } else if (att.mimeType.includes('dxf') || att.mimeType.includes('lisp') || att.mimeType.includes('plain')) {
+          Icon = FileCode;
+          colorClass = "text-emerald-400";
+      }
+
+      return (
+          <div key={idx} className="w-24 h-24 rounded-lg border border-white/10 bg-slate-900/50 flex flex-col items-center justify-center p-2 gap-2 hover:bg-slate-900 transition-colors" title={att.name}>
+              <Icon size={24} className={colorClass} />
+              <span className="text-[10px] text-center text-slate-400 line-clamp-2 leading-tight break-all w-full">
+                  {att.name}
+              </span>
+              <span className="text-[8px] text-slate-600 uppercase font-bold">{att.name.split('.').pop()}</span>
+          </div>
+      );
+  };
 
   return (
     <div className={`flex w-full mb-6 ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -81,7 +117,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onCodeAct
           )}
 
           {/* Standard Text Bubble */}
-          {!isProposal && message.content && (
+          {!isProposal && (message.content || (message.attachments && message.attachments.length > 0)) && (
             <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-md break-words max-w-full relative
               ${isUser 
                 ? 'bg-blue-600 text-white rounded-tr-none' 
@@ -93,6 +129,13 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onCodeAct
               {isLibrary && (
                   <div className="absolute -top-2.5 left-0 px-2 py-0.5 bg-amber-500 text-slate-900 text-[10px] font-bold rounded-full flex items-center gap-1 shadow-lg">
                       <ShieldCheck size={10} /> Verified Library Item
+                  </div>
+              )}
+
+              {/* Render Attachments (Images, PDF, etc) */}
+              {message.attachments && message.attachments.length > 0 && (
+                  <div className={`flex flex-wrap gap-2 mb-2 ${isUser ? 'justify-end' : 'justify-start'}`}>
+                      {message.attachments.map((att, idx) => renderAttachment(att, idx))}
                   </div>
               )}
 
@@ -118,7 +161,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onCodeAct
               <div className="flex flex-wrap items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-700 gap-2">
                 <span className={`text-xs font-mono font-bold flex items-center gap-2 ${isLibrary ? 'text-amber-400' : isUser ? 'text-blue-400' : 'text-emerald-400'}`}>
                     {isLibrary && <Sparkles size={12} />}
-                    {isLibrary ? 'Global Library Standard' : isUser ? 'Girdiğiniz Kod / Input Code' : 'AutoLISP / Visual LISP'}
+                    {isLibrary ? 'Global Library Standard' : isUser ? 'Girdiğiniz Kod / Input Code' : 'AutoLISP Master v2.4 Strict Mode'}
                 </span>
                 
                 <div className="flex items-center gap-2">

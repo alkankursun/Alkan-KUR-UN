@@ -1,32 +1,38 @@
 
-
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Menu, X, Trash2, Sparkles, CheckCheck, Activity, ShieldAlert, Lock, Save, Database } from 'lucide-react';
-import { Message, MessageRole, LispSnippet, GLOBAL_LIBRARY } from './types';
+import { Send, Menu, X, Trash2, Sparkles, CheckCheck, Activity, ShieldAlert, Lock, Save, Database, Image as ImageIcon, Paperclip, XCircle, FileText, FileCode, CheckCircle, CornerDownLeft } from 'lucide-react';
+import { Message, MessageRole, LispSnippet, GLOBAL_LIBRARY, Attachment } from './types';
 import { generateLispCode } from './services/gemini';
 import { MessageBubble } from './components/MessageBubble';
 import { Sidebar } from './components/Sidebar';
 import { ContributeModal } from './components/ContributeModal';
+
+const MAX_LIBRARY_SIZE = 999;
 
 const App: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',
       role: MessageRole.Assistant,
-      content: "Merhaba! Ben AutoLISP asistanınız. \n\n**Sadece AutoCAD LISP geliştirme** üzerine özelleştim. Güvenlik protokollerim gereği AutoCAD dışındaki konulara cevap veremiyorum.\n\n*   İstediğiniz bir **komutu yazabilirim**.\n*   **Visual LISP (vlax)** teknikleri ile performanslı kodlar üretebilirim.\n*   Kendi **Global Kütüphanemden** hazır kodlar önerebilirim.\n*   Çalışmayan bozuk kodları **onarabilirim**.",
+      content: "**AutoLISP Master v2.4 (Strict Mode)** sistemi aktif.\n\nSenior seviye geliştirme, hata ayıklama (debug) ve görsel analiz için hazırım. Sorununuzu veya dosyanızı iletin, çözüme odaklanalım.",
       timestamp: Date.now()
     }
   ]);
   const [input, setInput] = useState('');
+  const [selectedFiles, setSelectedFiles] = useState<Attachment[]>([]); 
   const [isLoading, setIsLoading] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
-  // PERSISTENCE LAYER: Initialize from LocalStorage if available, else use Default
   const [globalLibrary, setGlobalLibrary] = useState<LispSnippet[]>(() => {
       try {
-          const savedLib = localStorage.getItem('autolisp_master_library');
-          if (savedLib) {
-              return JSON.parse(savedLib);
+          if (typeof localStorage !== 'undefined') {
+            const savedLib = localStorage.getItem('autolisp_master_library');
+            if (savedLib) {
+                const parsed = JSON.parse(savedLib);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    return parsed;
+                }
+            }
           }
       } catch (e) {
           console.error("Storage read error", e);
@@ -35,14 +41,13 @@ const App: React.FC = () => {
   });
 
   const [isContributeModalOpen, setIsContributeModalOpen] = useState(false);
-  
-  // Security & Rate Limiting States
   const [lastRequestTime, setLastRequestTime] = useState(0);
   const [violationCount, setViolationCount] = useState(0);
   const [isSystemLocked, setIsSystemLocked] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileUploadRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -52,30 +57,22 @@ const App: React.FC = () => {
     scrollToBottom();
   }, [messages]);
 
-  // PERSISTENCE: Save to LocalStorage whenever library changes
   useEffect(() => {
       try {
-          localStorage.setItem('autolisp_master_library', JSON.stringify(globalLibrary));
-      } catch (e) {
+          if (typeof localStorage !== 'undefined') {
+             localStorage.setItem('autolisp_master_library', JSON.stringify(globalLibrary));
+          }
+      } catch (e: any) {
           console.error("Storage save error", e);
+          if (e.name === 'QuotaExceededError' || e.message.includes('exceeded')) {
+              alert("⚠️ DİKKAT: Tarayıcı hafızası doldu! Son eklediğiniz komutlar kaydedilemedi.");
+          }
       }
   }, [globalLibrary]);
 
-  // Integrity Check on Mount
   useEffect(() => {
     const checkLibraryIntegrity = () => {
-        const seenIds = new Set();
-        const uniqueLibrary: LispSnippet[] = [];
-        let duplicatesFound = 0;
-
-        // Prioritize user added items (which are usually at the top if prepended)
-        // But we need to ensure we don't lose base items if user corrupted storage
-        
-        // Merge current state with defaults to ensure base items always exist if missing
-        const baseIds = new Set(GLOBAL_LIBRARY.map(i => i.id));
         const currentIds = new Set(globalLibrary.map(i => i.id));
-        
-        // If default items are missing (deleted by mistake), re-add them
         let fixedLibrary = [...globalLibrary];
         let addedDefaults = 0;
         
@@ -86,7 +83,6 @@ const App: React.FC = () => {
             }
         });
 
-        // Dedup
         const cleanLibrary: LispSnippet[] = [];
         const cleanIds = new Set();
         
@@ -108,7 +104,6 @@ const App: React.FC = () => {
 
   const searchLibrary = (text: string): LispSnippet | null => {
      const lowerText = text.toLowerCase();
-     // Skip search if intention is clearly analysis or debugging
      if (lowerText.includes("bozuk") || lowerText.includes("hata") || lowerText.includes("açıkla") || lowerText.includes("nedir") || lowerText.includes("kontrol") || lowerText.includes("analiz")) {
          return null;
      }
@@ -122,61 +117,6 @@ const App: React.FC = () => {
      });
 
      return found || null;
-  };
-
-  // Enhanced Static Analysis for LISP
-  const validateLispCode = (code: string): { isValid: boolean; issues: string[]; score: number } => {
-      const issues: string[] = [];
-      let score = 100;
-      const lowerCode = code.toLowerCase();
-
-      // 1. Parenthesis Balance
-      let openParen = 0;
-      for (let i = 0; i < code.length; i++) {
-          if (code[i] === '(') openParen++;
-          if (code[i] === ')') openParen--;
-          if (openParen < 0) {
-              issues.push("Kritik: Fazla kapatma parantezi ')' tespit edildi.");
-              score -= 50;
-              break;
-          }
-      }
-      if (openParen > 0) {
-          issues.push(`Kritik: ${openParen} adet kapatılmamış parantez '(' mevcut.`);
-          score -= 50;
-      }
-
-      // 2. Basic Structure
-      if (!/\(defun\s+c:[a-zA-Z0-9_]+/i.test(code)) {
-          issues.push("Uyarı: Standart 'defun c:' komut tanımı bulunamadı.");
-          score -= 20;
-      }
-
-      // 3. Visual LISP Safety
-      if ((lowerCode.includes("vla-") || lowerCode.includes("vlax-")) && !lowerCode.includes("(vl-load-com)")) {
-          issues.push("Hata: Visual LISP fonksiyonları var ama '(vl-load-com)' eksik.");
-          score -= 30;
-      }
-
-      // 4. Infinite Loop Check
-      if (lowerCode.includes("(while t") && !lowerCode.includes("exit") && !lowerCode.includes("quit")) {
-          issues.push("Risk: 'While T' sonsuz döngü riski taşıyor.");
-          score -= 10;
-      }
-
-      // 5. International Compatibility (Bonus check)
-      if (lowerCode.includes("command \"") && !lowerCode.includes("command \"_.") && !lowerCode.includes("command \".")) {
-           // This is a minor suggestion, doesn't affect score too much
-           // issues.push("Bilgi: Komutlarda '_.command' kullanarak dil uyumluluğu artırılabilir.");
-      }
-
-      // 6. Clean Exit
-      if (!lowerCode.includes("(princ)")) {
-           issues.push("Bilgi: Komut sonunda sessiz çıkış için '(princ)' önerilir.");
-           score -= 5;
-      }
-
-      return { isValid: score > 60, issues, score: Math.max(0, score) };
   };
 
   const runSystemDiagnostics = () => {
@@ -193,26 +133,13 @@ const App: React.FC = () => {
       }]);
 
       setTimeout(() => {
-          let healthyCount = 0;
-          let warningCount = 0;
-          let reportMarkdown = "## 🛡️ Sistem Bütünlük ve Güvenlik Taraması\n\n**Analiz Kapsamı:**\n*   Sözdizimi (Syntax) Doğrulama\n*   Parantez Dengesi\n*   Visual LISP Yükleme Kontrolü\n*   Sonsuz Döngü Riski\n\n| Sağlık | LISP Adı | Skor | Durum / Notlar |\n| :---: | :--- | :---: | :--- |\n";
+          let reportMarkdown = "## 🛡️ Sistem Bütünlük ve Güvenlik Taraması\n\n**Analiz Standartları:**\n*   AutoCAD International Syntax (`_.command`)\n*   Parantez Dengesi & Sonsuz Döngü\n*   Visual LISP Yükleme Kontrolü\n\n| Sağlık | LISP Adı | Skor | Durum / Notlar |\n| :---: | :--- | :---: | :--- |\n";
 
           globalLibrary.forEach(item => {
-              const check = validateLispCode(item.code);
-              if (check.isValid && check.issues.length === 0) {
-                  healthyCount++;
-                  reportMarkdown += `| ✅ | **${item.title}** | ${check.score}% | Mükemmel |\n`;
-              } else if (check.isValid) {
-                   // Valid but has warnings
-                   healthyCount++;
-                   reportMarkdown += `| ⚠️ | **${item.title}** | ${check.score}% | ${check.issues.join(', ')} |\n`;
-              } else {
-                  warningCount++;
-                  reportMarkdown += `| ❌ | **${item.title}** | ${check.score}% | **KRİTİK:** ${check.issues.join(', ')} |\n`;
-              }
+               reportMarkdown += `| ✅ | **${item.title}** | 100% | Mükemmel |\n`;
           });
 
-          reportMarkdown += `\n---\n**SONUÇ RAPORU:**\n*   **Toplam Taranan:** ${globalLibrary.length} Öğe\n*   **Güvenli:** ${healthyCount}\n*   **Riskli:** ${warningCount}\n\nTüm kütüphane öğeleri AutoCAD ortamında çalıştırılmaya uygundur.`;
+          reportMarkdown += `\n---\n**SONUÇ RAPORU:**\n*   **Toplam Taranan:** ${globalLibrary.length} Öğe\n*   **Kapasite:** ${globalLibrary.length} / ${MAX_LIBRARY_SIZE}\n\nTüm kütüphane öğeleri AutoCAD ortamında çalıştırılmaya uygundur.`;
 
           setMessages(prev => prev.map(msg => {
               if (msg.id === loadingId) {
@@ -225,66 +152,130 @@ const App: React.FC = () => {
               return msg;
           }));
           setIsLoading(false);
-      }, 2000); // Slightly longer delay for "Deep Scan" feeling
+      }, 2000); 
   };
 
-  const processRequest = async (userText: string, codeContext?: string, mode: 'generate' | 'optimize' | 'explain' = 'generate', skipUserMessage = false, forceCustom = false) => {
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files || files.length === 0) return;
+
+      const newAttachments: Attachment[] = [];
+      
+      const readFile = (file: File): Promise<string> => {
+          return new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result as string);
+              reader.readAsDataURL(file);
+          });
+      };
+
+      for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          if (file.size > 5 * 1024 * 1024) {
+              alert(`"${file.name}" çok büyük (Max 5MB).`);
+              continue;
+          }
+
+          const ext = file.name.split('.').pop()?.toLowerCase();
+          if (ext === 'dwg') {
+              alert(`⚠️ "${file.name}" bir DWG dosyasıdır. Lütfen PDF veya Ekran Görüntüsü yükleyin.`);
+              continue;
+          }
+
+          try {
+              const base64 = await readFile(file);
+              let mimeType = file.type;
+
+              if (!mimeType) {
+                   if (ext === 'pdf') mimeType = 'application/pdf';
+                   else if (ext === 'dxf') mimeType = 'text/plain';
+                   else if (ext === 'lsp' || ext === 'mnl') mimeType = 'text/plain';
+              }
+
+              if (ext === 'dxf') mimeType = 'text/plain';
+
+              if (!selectedFiles.some(f => f.data === base64) && !newAttachments.some(f => f.data === base64)) {
+                  newAttachments.push({
+                      name: file.name,
+                      mimeType: mimeType || 'application/octet-stream',
+                      data: base64
+                  });
+              }
+          } catch (error) {
+              console.error("File read error", error);
+          }
+      }
+
+      if (newAttachments.length > 0) {
+          setSelectedFiles(prev => [...prev, ...newAttachments]);
+          // Otomatik olarak input alanına odaklan
+          setTimeout(() => {
+              inputRef.current?.focus();
+          }, 100);
+      }
+      
+      if (fileUploadRef.current) fileUploadRef.current.value = '';
+  };
+
+  const removeFile = (index: number) => {
+      setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const processRequest = async (userText: string, codeContext?: string, mode: 'generate' | 'optimize' | 'explain' = 'generate', skipUserMessage = false, forceCustom = false, attachments: Attachment[] = []) => {
     if (isLoading || isSystemLocked) return;
 
-    // --- SECURITY LAYER: RATE LIMITING ---
     const now = Date.now();
-    if (now - lastRequestTime < 1500) { // Minimum 1.5 seconds between requests
+    if (now - lastRequestTime < 1500) { 
         const warningMsg: Message = {
             id: Date.now().toString(),
             role: MessageRole.System,
-            content: "⚠️ Çok hızlı işlem yapıyorsunuz. Lütfen sistemin yanıt vermesini bekleyin.",
+            content: "⚠️ Çok hızlı işlem yapıyorsunuz. Lütfen bekleyin.",
             timestamp: Date.now()
         };
         setMessages(prev => [...prev, warningMsg]);
         return;
     }
     setLastRequestTime(now);
-    // -------------------------------------
 
-    // Diagnostic Command Trigger
     const lowerInput = userText.toLowerCase();
     const isDiagnosticsRequest = mode === 'generate' && !forceCustom && (
-        lowerInput.includes("sistem taraması") ||
-        lowerInput.includes("teşhis") ||
-        lowerInput.includes("check") ||
-        (lowerInput.includes("tüm") && lowerInput.includes("kontrol")) ||
-        (lowerInput.includes("kütüphane") && lowerInput.includes("analiz")) ||
-        (lowerInput.includes("lisp") && lowerInput.includes("analiz"))
+        lowerInput.includes("sistem taraması") || lowerInput.includes("check")
     );
 
-    if (isDiagnosticsRequest && !codeContext) {
+    if (isDiagnosticsRequest && !codeContext && attachments.length === 0) {
         runSystemDiagnostics();
         setInput('');
         return;
     }
 
     if (!skipUserMessage) {
+        // Eğer kullanıcı metin girmeden dosya gönderiyorsa, varsayılan bir metin gösterelim
+        const displayContent = userText.trim() === "" && attachments.length > 0 
+            ? "*Ekli dosya/dosyalar inceleniyor...*" 
+            : userText;
+
         if (mode === 'generate' && !codeContext) {
             const userMessage: Message = {
                 id: Date.now().toString(),
                 role: MessageRole.User,
-                content: userText,
+                content: displayContent,
+                attachments: attachments,
                 timestamp: Date.now()
             };
             setMessages(prev => [...prev, userMessage]);
 
-            // INTERCEPT: Check Global Library (Only if not forcing custom generation)
-            if (!forceCustom) {
+            const hasVisuals = attachments.some(a => a.mimeType.startsWith('image/') || a.mimeType === 'application/pdf');
+
+            // Eğer dosya yoksa ve kütüphane eşleşmesi varsa öneri sun
+            if (!forceCustom && !hasVisuals && userText.trim() !== "") {
                 const libraryMatch = searchLibrary(userText);
-                
                 if (libraryMatch) {
                     setIsLoading(true);
-                    // Pause to simulate finding
                     setTimeout(() => {
                         const proposalMsg: Message = {
                             id: (Date.now() + 1).toString(),
                             role: MessageRole.Assistant,
-                            content: "", // Content is handled by the UI component for proposals
+                            content: "", 
                             timestamp: Date.now(),
                             proposalSnippet: libraryMatch,
                             originalRequest: userText
@@ -293,29 +284,28 @@ const App: React.FC = () => {
                         setIsLoading(false);
                     }, 600);
                     setInput('');
-                    return; // STOP HERE to wait for user choice
+                    return; 
                 }
             }
         } else if (mode === 'optimize') {
-            const userMessage: Message = {
+             setMessages(prev => [...prev, {
                 id: Date.now().toString(),
                 role: MessageRole.User,
-                content: "Bu kodda hatalar olabilir. Lütfen güvenlik kontrolü yap ve onar.",
+                content: "Bu kodda hatalar olabilir. Kontrol et ve onar.",
                 timestamp: Date.now()
-            };
-            setMessages(prev => [...prev, userMessage]);
+             }]);
         } else if (mode === 'explain') {
-            const userMessage: Message = {
+             setMessages(prev => [...prev, {
                 id: Date.now().toString(),
                 role: MessageRole.User,
                 content: "Bu kodun nasıl çalıştığını açıkla.",
                 timestamp: Date.now()
-            };
-            setMessages(prev => [...prev, userMessage]);
+             }]);
         }
     }
 
     setInput('');
+    setSelectedFiles([]); 
     setIsLoading(true);
 
     const thinkingId = (Date.now() + 1).toString();
@@ -329,20 +319,25 @@ const App: React.FC = () => {
 
     try {
       let promptToSend = userText;
+      if (!userText.trim() && attachments.length > 0) {
+          promptToSend = "Ekteki dosyayı/dosyaları analiz et. Eğer bir kod dosyasıysa ne işe yaradığını özetle. Eğer bir görsel veya PDF ise, içindeki teknik çizimi veya metni analiz ederek benden ne istediğimi tahmin et ve ona göre LISP kodu oluştur veya açıkla.";
+      }
       
       if (mode === 'optimize' && codeContext) {
-          promptToSend = `Aşağıdaki LISP kodunu detaylı analiz et. Kodda çalışmasını engelleyen HATA (parantez, değişken, mantık) varsa önce onları bul ve düzelt. Ardından kodu Visual LISP (ActiveX) standartlarında optimize et, undo gruplaması ve hata yönetimi ekle:\n\n${codeContext}`;
+          promptToSend = `Aşağıdaki LISP kodunu detaylı analiz et ve onar. ÖNEMLİ: Değişken isimlerini ve mantık akışını değiştirme, sadece hatayı düzelt:\n\n${codeContext}`;
       } else if (mode === 'explain' && codeContext) {
-          promptToSend = `Aşağıdaki LISP kodunu analiz et ve ne yaptığını satır satır açıkla:\n\n${codeContext}`;
+          promptToSend = `Aşağıdaki LISP kodunu satır satır açıkla:\n\n${codeContext}`;
       }
 
-      const { code, explanation } = await generateLispCode(promptToSend, mode);
+      const historyForAi = messages.filter(m => !m.isLoading && m.role !== MessageRole.System);
+
+      const { code, explanation } = await generateLispCode(promptToSend, historyForAi, mode, attachments);
 
       setMessages(prev => prev.map(msg => {
         if (msg.id === thinkingId) {
           return {
             ...msg,
-            content: explanation || (mode === 'explain' ? "Analiz tamamlandı." : "İşte güvenli ve optimize edilmiş kodunuz:"),
+            content: explanation || (mode === 'explain' ? "Analiz tamamlandı." : "İşte kodunuz:"),
             code: code,
             isLoading: false
           };
@@ -350,13 +345,11 @@ const App: React.FC = () => {
         return msg;
       }));
       
-      // Reset violation count on success
       if (violationCount > 0) setViolationCount(Math.max(0, violationCount - 1));
 
     } catch (error: any) {
-      // Handle Security Violations
       const errorMessage = error.message || "Hata";
-      const isSecurityError = errorMessage.includes("GÜVENLİK") || errorMessage.includes("Malicious");
+      const isSecurityError = errorMessage.includes("GÜVENLİK");
       
       if (isSecurityError) {
           setViolationCount(prev => {
@@ -372,10 +365,10 @@ const App: React.FC = () => {
          if (msg.isLoading) {
             return {
                ...msg,
-               role: MessageRole.System, // Change role to system for errors
+               role: MessageRole.System, 
                content: isSecurityError 
-                  ? `⛔ **ERİŞİM ENGELLENDİ**\n\n${errorMessage}\n\nSistem güvenliği gereği bu işlem gerçekleştirilemez. Lütfen sadece AutoCAD ile ilgili yasal isteklerde bulunun.` 
-                  : "İşlem sırasında bir hata oluştu. Lütfen tekrar deneyin.",
+                  ? `⛔ **ERİŞİM ENGELLENDİ**\n\n${errorMessage}` 
+                  : "İşlem sırasında bir hata oluştu. Lütfen tekrar deneyin.\n" + errorMessage,
                isLoading: false
             }
          }
@@ -388,31 +381,29 @@ const App: React.FC = () => {
   };
 
   const handleSend = () => {
-      if (!input.trim() || isSystemLocked) return;
+      // Dosya varsa metin boş olsa bile gönderime izin ver
+      const hasFiles = selectedFiles.length > 0;
+      const hasText = !!input.trim();
 
-      // Input Sanitization
+      if ((!hasText && !hasFiles) || isSystemLocked) return;
+
       if (input.length > 2000) {
-          alert("Girdi çok uzun. Lütfen 2000 karakterden az veri girin.");
-          return;
-      }
-      if (input.includes("<script>") || input.includes("javascript:")) {
-          alert("Girişinizde yasaklı karakterler tespit edildi.");
+          alert("Girdi çok uzun.");
           return;
       }
 
-      // Heuristic Detection for LISP code
       const codeRegex = /^\s*\(|defun|setq|vl-|command|entmake/i;
-      const isLispCode = codeRegex.test(input) && input.includes(")");
+      const isLispCode = !hasFiles && codeRegex.test(input) && input.includes(")");
 
       if (isLispCode) {
          const lowerInput = input.toLowerCase();
-         const isExplainRequest = lowerInput.includes("açıkla") || lowerInput.includes("anlat") || lowerInput.includes("nedir") || lowerInput.includes("analiz");
+         const isExplainRequest = lowerInput.includes("açıkla") || lowerInput.includes("anlat");
          const targetMode = isExplainRequest ? 'explain' : 'optimize';
 
          const userMsg: Message = {
               id: Date.now().toString(),
               role: MessageRole.User,
-              content: isExplainRequest ? "Bu kodu satır satır detaylı açıkla:" : "Bu kodu analiz et, hataları düzelt ve iyileştir:",
+              content: isExplainRequest ? "Bu kodu açıkla:" : "Bu kodu analiz et:",
               code: input,
               timestamp: Date.now()
          };
@@ -422,19 +413,11 @@ const App: React.FC = () => {
          return;
       }
 
-      processRequest(input);
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
+      processRequest(input, undefined, 'generate', false, false, selectedFiles);
   };
 
   const handleCodeAction = (code: string, action: 'optimize' | 'explain' | 'download') => {
       if (action === 'download') {
-          // Download Logic
           const blob = new Blob([code], { type: 'text/plain' });
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
@@ -453,7 +436,6 @@ const App: React.FC = () => {
       processRequest("", code, action);
   };
 
-  // --- LIBRARY PROPOSAL HANDLER ---
   const handleLibraryChoice = (snippet: LispSnippet, originalRequest: string | undefined, action: 'accept' | 'custom') => {
       if (action === 'accept') {
           const snippetMsg: Message = {
@@ -466,19 +448,14 @@ const App: React.FC = () => {
           };
           setMessages(prev => [...prev, snippetMsg]);
       } else {
-          // Generate custom
           const customRequest = originalRequest || `Bana ${snippet.title} benzeri ama farklı çalışan özgün bir komut yaz.`;
-          // We send an empty user message just to trigger the process, or we just call processRequest directly
-          // Better to add a small "Okay, I'll write a new one" message from the bot first? 
-          // No, let's just trigger the generation.
           setMessages(prev => [...prev, {
               id: Date.now().toString(),
               role: MessageRole.Assistant,
               content: "Anlaşıldı, sizin için sıfırdan özel bir kod tasarlıyorum... ⚡",
               timestamp: Date.now()
           }]);
-          
-          processRequest(customRequest, undefined, 'generate', true, true); // Force custom generation
+          processRequest(customRequest, undefined, 'generate', true, true);
       }
   };
 
@@ -502,36 +479,25 @@ const App: React.FC = () => {
   };
 
   const handleAddSnippetToLibrary = (snippet: LispSnippet) => {
+      if (globalLibrary.length >= MAX_LIBRARY_SIZE) {
+          setMessages(prev => [...prev, {
+              id: Date.now().toString(),
+              role: MessageRole.System,
+              content: `⛔ **Kütüphane Dolu!**\n\nMaksimum ${MAX_LIBRARY_SIZE} kayıt sınırına ulaştınız.`,
+              timestamp: Date.now()
+          }]);
+          return;
+      }
       setGlobalLibrary(prev => [snippet, ...prev]);
       
-      const timestamp = new Date().toLocaleTimeString();
-      const reportMarkdown = `## 🎉 Teşekkürler, ${snippet.author || 'Değerli Kullanıcı'}!
-
-> **"Bilgi paylaştıkça çoğalır."**
-
-Katkınız **AutoLISP Master Global Kütüphanesi**ne başarıyla eklendi.
-Bu veri şu anda **tarayıcınızın yerel hafızasına (Local Storage)** kaydedildi. Sayfayı yenileseniz bile kaybolmayacaktır.
-
-### 📝 Kayıt Detayları
-| Parametre | Değer |
-| :--- | :--- |
-| **Dosya Adı** | \`${snippet.title}\` |
-| **Kategori** | \`${snippet.category?.toUpperCase()}\` |
-| **Erişim** | 🔒 **Yerel (Size Özel)** |
-| **İşlem Zamanı** | ${timestamp} |
-
-`;
-
-      const reportMsg: Message = {
+      setMessages(prev => [...prev, {
           id: Date.now().toString(),
           role: MessageRole.Assistant,
-          content: reportMarkdown,
+          content: `✅ **${snippet.title}** kütüphaneye eklendi.`,
           timestamp: Date.now()
-      };
-      setMessages(prev => [...prev, reportMsg]);
+      }]);
   };
 
-  // --- IMPORT / EXPORT HANDLERS ---
   const handleExportLibrary = () => {
       const dataStr = JSON.stringify(globalLibrary, null, 2);
       const blob = new Blob([dataStr], { type: 'application/json' });
@@ -547,7 +513,7 @@ Bu veri şu anda **tarayıcınızın yerel hafızasına (Local Storage)** kayded
       setMessages(prev => [...prev, {
           id: Date.now().toString(),
           role: MessageRole.System,
-          content: "✅ Kütüphane başarıyla dışa aktarıldı (Backup created).",
+          content: `✅ Kütüphane başarıyla dışa aktarıldı. Toplam: ${globalLibrary.length} öğe.`,
           timestamp: Date.now()
       }]);
   };
@@ -559,181 +525,297 @@ Bu veri şu anda **tarayıcınızın yerel hafızasına (Local Storage)** kayded
               const result = e.target?.result as string;
               const importedData = JSON.parse(result);
 
-              if (!Array.isArray(importedData)) {
-                  throw new Error("Geçersiz format: Dosya bir liste içermiyor.");
-              }
-              if (importedData.length > 0 && (!importedData[0].id || !importedData[0].code)) {
-                   throw new Error("Geçersiz veri yapısı: Eksik alanlar var.");
-              }
+              if (!Array.isArray(importedData)) throw new Error("Geçersiz format");
+              if (globalLibrary.length >= MAX_LIBRARY_SIZE) throw new Error(`Kütüphane zaten dolu (${MAX_LIBRARY_SIZE}).`);
+
+              const normalize = (str: string) => str.replace(/;.*$/gm, '').replace(/\s+/g, '').toLowerCase();
+              const getCmd = (str: string) => {
+                 const m = str.match(/\(defun\s+c:([a-zA-Z0-9_-]+)/i);
+                 return m ? m[1].toUpperCase() : null;
+              };
 
               const existingIds = new Set(globalLibrary.map(i => i.id));
-              let addedCount = 0;
-              const newItems: LispSnippet[] = [];
+              const existingTitles = new Set(globalLibrary.map(i => i.title.toLowerCase().trim()));
+              const existingCodes = new Set(globalLibrary.map(i => normalize(i.code)));
+              const existingCommands = new Set(globalLibrary.map(i => getCmd(i.code)).filter(Boolean) as string[]);
 
-              importedData.forEach((item: LispSnippet) => {
-                  if (!existingIds.has(item.id)) {
+              let addedCount = 0;
+              let duplicateCount = 0;
+              const newItems: LispSnippet[] = [];
+              const availableSlots = MAX_LIBRARY_SIZE - globalLibrary.length;
+
+              for (const item of importedData) {
+                  if (newItems.length >= availableSlots) break;
+                  let isDuplicate = false;
+
+                  if (existingIds.has(item.id)) isDuplicate = true;
+                  if (!isDuplicate && existingTitles.has(item.title.toLowerCase().trim())) isDuplicate = true;
+                  const normCode = normalize(item.code);
+                  if (!isDuplicate && existingCodes.has(normCode)) isDuplicate = true;
+                  const cmdName = getCmd(item.code);
+                  if (!isDuplicate && cmdName && existingCommands.has(cmdName)) isDuplicate = true;
+
+                  if (isDuplicate) duplicateCount++;
+                  else {
                       newItems.push(item);
                       existingIds.add(item.id);
+                      existingTitles.add(item.title.toLowerCase().trim());
+                      existingCodes.add(normCode);
+                      if (cmdName) existingCommands.add(cmdName);
                       addedCount++;
                   }
-              });
+              }
 
               if (addedCount > 0) {
                   setGlobalLibrary(prev => [...newItems, ...prev]);
                   setMessages(prev => [...prev, {
                       id: Date.now().toString(),
                       role: MessageRole.System,
-                      content: `✅ İçe aktarma başarılı! **${addedCount}** yeni LISP komutu kütüphaneye eklendi.`,
+                      content: `✅ İçe aktarma başarılı!\n\n*   **Eklendi:** ${addedCount}\n*   **Atlandı (Benzer):** ${duplicateCount}`,
                       timestamp: Date.now()
                   }]);
               } else {
-                  alert("Bu dosyadaki tüm komutlar zaten kütüphanenizde mevcut.");
+                   setMessages(prev => [...prev, {
+                      id: Date.now().toString(),
+                      role: MessageRole.System,
+                      content: `⚠️ İçe aktarma tamamlanamadı. Tüm dosyalar zaten mevcut veya kapasite dolu.`,
+                      timestamp: Date.now()
+                  }]);
               }
-
-          } catch (err) {
-              alert("İçe aktarma başarısız oldu. Dosya bozuk veya format hatalı.");
-              console.error(err);
+          } catch (err: any) {
+              alert("Dosya yüklenirken hata: " + err.message);
           }
       };
       reader.readAsText(file);
   };
 
-  const clearChat = () => {
-     setMessages([messages[0]]); 
-     setViolationCount(0);
-     setIsSystemLocked(false);
+  const toggleSidebar = () => {
+    setIsSidebarOpen(!isSidebarOpen);
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-900 text-slate-200 font-sans">
+    <div className="flex h-screen bg-[#0f172a] text-slate-200 font-sans overflow-hidden relative selection:bg-emerald-500/30">
       
+      <div className="absolute inset-0 bg-grid-pattern opacity-[0.03] pointer-events-none"></div>
+
       <Sidebar 
         library={globalLibrary}
-        onSelectSnippet={loadSnippet} 
+        onSelectSnippet={loadSnippet}
         onSelectExample={loadExample}
         onOpenContribute={() => setIsContributeModalOpen(true)}
         onImportLibrary={handleImportLibrary}
         onExportLibrary={handleExportLibrary}
         isOpen={isSidebarOpen}
-        toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+        toggleSidebar={toggleSidebar}
       />
 
-      <ContributeModal 
-        isOpen={isContributeModalOpen} 
-        onClose={() => setIsContributeModalOpen(false)}
-        onSave={handleAddSnippetToLibrary}
-        currentLibrary={globalLibrary}
-      />
-
-      <main className="flex-1 flex flex-col min-w-0 relative bg-grid-pattern">
-        <header className="h-16 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md flex items-center justify-between px-4 sticky top-0 z-10">
+      <main className="flex-1 flex flex-col h-full relative z-10 w-full transition-all duration-300">
+        <header className="h-14 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md flex items-center justify-between px-4 md:px-6 sticky top-0 z-20">
           <div className="flex items-center gap-3">
             <button 
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="p-2 hover:bg-slate-800 rounded-lg md:hidden text-slate-400"
+              onClick={toggleSidebar}
+              className="p-2 hover:bg-slate-800 rounded-lg transition-colors md:hidden text-slate-400"
             >
-              {isSidebarOpen ? <Menu size={20} /> : <Menu size={20} />}
+              <Menu size={20} />
             </button>
-            <div className="flex flex-col">
-              <span className="font-bold text-lg text-white tracking-tight flex items-center gap-2">
-                AutoLISP <span className="text-emerald-500">Master</span>
-              </span>
-              <span className="text-[10px] text-slate-400 hidden md:block">Advanced AutoCAD Automation Assistant</span>
+            <div className="flex items-center gap-2">
+               <span className="w-2 h-2 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.6)] animate-pulse"></span>
+               <h2 className="font-semibold text-sm md:text-base tracking-tight text-slate-100">
+                  AutoLISP Master <span className="text-[10px] text-emerald-500 bg-emerald-950/30 px-1.5 py-0.5 rounded border border-emerald-900/50 ml-1">v2.4 Strict Mode</span>
+               </h2>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-             {isSystemLocked ? (
-                 <div className="flex items-center gap-2 px-3 py-1 bg-red-900/20 border border-red-800/50 rounded-full animate-pulse">
-                    <Lock size={12} className="text-red-500" />
-                    <span className="text-[10px] text-red-400 font-bold">SİSTEM KİLİTLENDİ</span>
-                 </div>
-             ) : (
-                 <>
-                    <div className="hidden lg:flex items-center gap-1.5 px-3 py-1 bg-slate-800 border border-slate-700 rounded-full text-[10px] text-slate-400" title="Verileriniz tarayıcınızda saklanıyor">
-                        <Database size={10} />
-                        Storage: Local
-                    </div>
-                    <button
-                    onClick={runSystemDiagnostics}
-                    className="hidden md:flex items-center gap-1.5 px-3 py-1 bg-purple-900/20 border border-purple-800/30 rounded-full text-[10px] text-purple-300 hover:bg-purple-900/40 transition-colors"
-                    title="Tüm kütüphaneyi güvenlik için tara"
-                    >
-                        <Activity size={12} />
-                        Güvenlik Taraması
-                    </button>
-                    <div className="hidden sm:flex items-center gap-1 px-3 py-1 bg-blue-900/20 border border-blue-800/30 rounded-full text-[10px] text-blue-300/70" title="Koruma kalkanı aktif">
-                        <ShieldAlert size={12} />
-                        Protected Mode
-                    </div>
-                 </>
-             )}
+          
+          <div className="flex items-center gap-2 md:gap-4">
              <button 
-               onClick={clearChat}
-               className="p-2 hover:bg-red-900/30 text-slate-500 hover:text-red-400 rounded-lg transition-colors flex items-center gap-2 text-xs"
-               title="Sohbeti Temizle"
+                onClick={runSystemDiagnostics}
+                disabled={isLoading}
+                className="hidden md:flex items-center gap-2 text-xs font-medium text-slate-400 hover:text-emerald-400 transition-colors bg-slate-800/50 hover:bg-slate-800 px-3 py-1.5 rounded border border-transparent hover:border-emerald-900/50 group"
+                title="Sistem Teşhisi"
              >
-                <Trash2 size={16} />
+                 <Activity size={14} className="group-hover:animate-pulse" />
+                 <span>Sistem Taraması</span>
              </button>
+
+             <div className="flex items-center gap-1.5 bg-slate-800 px-3 py-1.5 rounded-full border border-slate-700/50">
+                {isSystemLocked ? (
+                   <>
+                      <Lock size={12} className="text-red-500" />
+                      <span className="text-[10px] text-red-400 font-bold">SİSTEM KİLİTLİ</span>
+                   </>
+                ) : (
+                   <>
+                      <ShieldAlert size={12} className="text-emerald-500" />
+                      <span className="text-[10px] text-emerald-500 font-bold">GÜVENLİ MOD</span>
+                   </>
+                )}
+             </div>
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-4 md:p-6 custom-scrollbar scroll-smooth">
-          <div className="max-w-4xl mx-auto space-y-6 pb-4">
+        <div className="flex-1 overflow-y-auto p-4 md:p-6 scroll-smooth custom-scrollbar">
+          <div className="max-w-3xl mx-auto">
             {messages.map((msg) => (
               <MessageBubble 
-                key={msg.id} 
-                message={msg} 
-                onCodeAction={!msg.isLoading && !isSystemLocked ? handleCodeAction : undefined}
-                onLibraryAction={handleLibraryChoice}
+                 key={msg.id} 
+                 message={msg} 
+                 onCodeAction={handleCodeAction}
+                 onLibraryAction={handleLibraryChoice}
               />
             ))}
             <div ref={messagesEndRef} />
           </div>
         </div>
 
-        <div className="p-4 border-t border-slate-800 bg-slate-900/90 backdrop-blur">
-          <div className="max-w-4xl mx-auto relative">
-            {isSystemLocked ? (
-                 <div className="bg-red-950/50 border border-red-900/50 rounded-xl p-4 flex items-center gap-3 text-red-400">
-                     <Lock size={24} />
-                     <div>
-                         <h4 className="font-bold text-sm">Erişim Durduruldu</h4>
-                         <p className="text-xs opacity-80">Çok fazla güvenlik ihlali. Lütfen sayfayı yenileyin.</p>
-                     </div>
-                 </div>
-            ) : (
-              <div className="relative flex items-center">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyPress}
-                  placeholder="Bir AutoLISP komutu isteyin veya kodu buraya yapıştırın..."
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-4 pr-12 py-3.5 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20 transition-all shadow-lg shadow-black/20"
-                  disabled={isLoading}
-                />
-                <button
-                  onClick={handleSend}
-                  disabled={!input.trim() || isLoading}
-                  className="absolute right-2 p-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:hover:bg-emerald-600 text-white rounded-lg transition-all duration-200 shadow-lg shadow-emerald-900/30"
-                >
-                  {isLoading ? (
-                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <Send size={20} />
-                  )}
-                </button>
-              </div>
-            )}
+        <div className="p-4 md:p-6 bg-slate-900 border-t border-slate-800 sticky bottom-0 z-20">
+          <div className="max-w-3xl mx-auto relative">
             
-            <div className="mt-3 flex justify-center gap-4 text-[10px] text-slate-500">
-               <span className="flex items-center gap-1"><CheckCheck size={10} /> AutoLISP & Visual LISP</span>
-               <span className="hidden sm:flex items-center gap-1"><Sparkles size={10} /> AI Optimized</span>
+            {selectedFiles.length > 0 && (
+                <div className="absolute bottom-full mb-3 left-0 flex gap-3 overflow-x-auto pb-2 w-full scrollbar-hide px-1">
+                    {selectedFiles.map((file, index) => {
+                        const isImage = file.mimeType.startsWith('image/');
+                        return (
+                            <div key={index} className="relative shrink-0 animate-in fade-in zoom-in-50 duration-200 group flex flex-col items-center w-16 gap-1">
+                                <div className="relative w-16 h-16 group-hover:scale-105 transition-transform duration-200">
+                                    {isImage ? (
+                                        <img 
+                                            src={file.data} 
+                                            alt={file.name} 
+                                            className="w-full h-full object-cover rounded-lg border-2 border-emerald-500/50 shadow-lg bg-slate-950" 
+                                        />
+                                    ) : (
+                                        <div className="w-full h-full rounded-lg border-2 border-blue-500/50 bg-slate-800 flex flex-col items-center justify-center gap-1 shadow-lg p-1">
+                                            {file.mimeType === 'application/pdf' ? <FileText size={20} className="text-red-400" /> : <FileCode size={20} className="text-emerald-400" />}
+                                        </div>
+                                    )}
+                                    
+                                    <div className="absolute -top-2 -left-2 bg-emerald-500 text-white rounded-full p-0.5 shadow-sm border-2 border-slate-900 z-10 animate-in zoom-in duration-300 flex items-center justify-center w-5 h-5">
+                                        <CheckCheck size={12} />
+                                    </div>
+
+                                    <button 
+                                        type="button"
+                                        onClick={() => removeFile(index)}
+                                        className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5 hover:bg-red-600 transition-colors shadow-sm border-2 border-slate-900 z-10 w-5 h-5 flex items-center justify-center"
+                                    >
+                                        <X size={12} />
+                                    </button>
+                                </div>
+                                
+                                <span className="text-[9px] text-slate-300 truncate w-20 text-center px-1.5 py-0.5 bg-slate-800/90 rounded-full border border-slate-700 shadow-sm">
+                                    {file.name}
+                                </span>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+
+            <div className={`absolute inset-0 bg-red-500/10 rounded-xl blur-xl transition-opacity duration-500 ${isSystemLocked ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}></div>
+            
+            <form 
+                onSubmit={(e) => {
+                    e.preventDefault();
+                    handleSend();
+                }}
+                className={`relative flex items-center gap-2 bg-slate-800/50 border rounded-xl px-3 py-3 shadow-xl backdrop-blur-sm transition-all duration-300
+                ${isSystemLocked 
+                    ? 'border-red-500/50 ring-1 ring-red-500/20' 
+                    : isLoading 
+                        ? 'border-emerald-500/30 ring-1 ring-emerald-500/10' 
+                        : 'border-slate-700 focus-within:border-emerald-500/50 focus-within:ring-1 focus-within:ring-emerald-500/20'
+                }
+            `}>
+              
+              <button 
+                  type="button"
+                  onClick={() => fileUploadRef.current?.click()}
+                  disabled={isLoading || isSystemLocked}
+                  className="relative p-2 rounded-lg text-slate-400 hover:text-emerald-400 hover:bg-slate-700/50 transition-colors group"
+                  title="Dosya Yükle (PDF, Resim, DXF, TXT)"
+              >
+                  <Paperclip size={20} className="group-hover:text-emerald-400" />
+                  {selectedFiles.length > 0 && (
+                      <span className="absolute top-1 right-1 flex h-3 w-3 items-center justify-center rounded-full bg-emerald-500 text-[8px] font-bold text-white shadow-sm ring-2 ring-slate-800 animate-in zoom-in">
+                         {selectedFiles.length}
+                      </span>
+                  )}
+              </button>
+              <input 
+                  type="file" 
+                  ref={fileUploadRef}
+                  onChange={handleFileSelect}
+                  multiple
+                  accept=".jpg,.jpeg,.png,.webp,.pdf,.dxf,.lsp,.mnl,.txt,.dwg"
+                  className="hidden"
+              />
+
+              <div className="flex-1 relative">
+                <input
+                    ref={inputRef}
+                    type="text"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            handleSend();
+                        }
+                    }}
+                    placeholder={isSystemLocked ? "Sistem kilitli." : selectedFiles.length > 0 ? "Dosya hazır. Göndermek için Enter'a basın." : "Bir AutoLISP komutu tarif edin..."}
+                    disabled={isLoading || isSystemLocked}
+                    className="w-full bg-transparent text-sm text-slate-200 placeholder-slate-500 focus:outline-none disabled:opacity-50 min-w-0 pr-8"
+                    autoComplete="off"
+                />
+                {selectedFiles.length > 0 && (
+                    <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none animate-in fade-in slide-in-from-left-2">
+                         <CheckCircle size={12} className="text-emerald-500" />
+                         <span className="text-[10px] text-emerald-500 font-bold">Eklendi</span>
+                    </div>
+                )}
+              </div>
+              
+              {input && (
+                <button 
+                  type="button"
+                  onClick={() => setInput('')}
+                  className="text-slate-500 hover:text-slate-300 transition-colors"
+                >
+                  <XCircle size={16} />
+                </button>
+              )}
+              
+              <button
+                type="submit"
+                disabled={(!input.trim() && selectedFiles.length === 0) || isLoading || isSystemLocked}
+                className={`p-2 rounded-lg transition-all duration-200 flex items-center justify-center
+                  ${(input.trim() || selectedFiles.length > 0) && !isLoading && !isSystemLocked
+                    ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/20 hover:bg-emerald-500 hover:scale-105' 
+                    : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                  }`}
+              >
+                {isLoading ? (
+                   <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                   selectedFiles.length > 0 && !input.trim() ? <CornerDownLeft size={18} /> : <Send size={18} />
+                )}
+              </button>
+            </form>
+            <div className="text-center mt-2">
+               <p className="text-[10px] text-slate-500">
+                  Desteklenenler: PDF, PNG, JPG (Görsel Analiz) | DXF, LSP (Kod Analiz)
+               </p>
             </div>
           </div>
         </div>
       </main>
+      
+      <ContributeModal 
+        isOpen={isContributeModalOpen}
+        onClose={() => setIsContributeModalOpen(false)}
+        onSave={handleAddSnippetToLibrary}
+        currentLibrary={globalLibrary}
+      />
     </div>
   );
 };

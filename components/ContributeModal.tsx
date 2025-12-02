@@ -1,5 +1,5 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { X, Upload, Play, CheckCircle, AlertCircle, FileText, Loader2, ShieldAlert, Info, FileCode, Lock, RefreshCw } from 'lucide-react';
 import { analyzeSubmittedCode } from '../services/gemini';
 import { LispSnippet } from '../types';
@@ -19,27 +19,44 @@ export const ContributeModal: React.FC<ContributeModalProps> = ({ isOpen, onClos
   const [analysisResult, setAnalysisResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [duplicateWarning, setDuplicateWarning] = useState<LispSnippet | null>(null);
+  const [duplicateReason, setDuplicateReason] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [showFileInfo, setShowFileInfo] = useState(false);
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Security Constants
-  const MAX_FILE_SIZE_BYTES = 50 * 1024; // 50KB Limit (LISP files are text, usually small)
+  const MAX_FILE_SIZE_BYTES = 50 * 1024; // 50KB Limit
+  const MAX_LIBRARY_SIZE = 999;
+
+  useEffect(() => {
+    if (!isOpen) {
+        setStep(1);
+        setRawCode("");
+        setUploadedFileName(null);
+        setAuthorName("");
+        setError(null);
+        setAnalysisResult(null);
+        setDuplicateWarning(null);
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
   const processFile = (file: File) => {
-    // Security Check: File Size
+    if (currentLibrary.length >= MAX_LIBRARY_SIZE) {
+        setError(`Kapasite Dolu: Kütüphanede maksimum ${MAX_LIBRARY_SIZE} öğe sınırı bulunmaktadır. Yeni dosya eklemeden önce yer açmalısınız.`);
+        return;
+    }
+
     if (file.size > MAX_FILE_SIZE_BYTES) {
         setError(`Güvenlik Uyarısı: Dosya boyutu çok büyük (${(file.size/1024).toFixed(1)}KB). Maksimum ${MAX_FILE_SIZE_BYTES/1024}KB yükleyebilirsiniz.`);
         return;
     }
 
-    // Security Check: File Extension
     const fileName = file.name.toLowerCase();
-    const validExtensions = ['.lsp', '.txt', '.mnl', '.scr', '.fas', '.vlx']; // Added .fas/.vlx to catch them and warn specifically
+    const validExtensions = ['.lsp', '.txt', '.mnl', '.scr', '.fas', '.vlx'];
     
-    // Check if extension is valid
     const hasValidExtension = validExtensions.some(ext => fileName.endsWith(ext));
 
     if (!hasValidExtension) {
@@ -47,7 +64,6 @@ export const ContributeModal: React.FC<ContributeModalProps> = ({ isOpen, onClos
         return;
     }
 
-    // Reject compiled LISP specifically
     if (fileName.endsWith('.fas') || fileName.endsWith('.vlx')) {
         setError(`"${file.name}" derlenmiş (compiled) bir dosyadır ve metin olarak okunamaz.\nLütfen açık kaynak kodlu (.lsp) versiyonunu yükleyin.`);
         return;
@@ -58,12 +74,12 @@ export const ContributeModal: React.FC<ContributeModalProps> = ({ isOpen, onClos
     reader.onload = (event) => {
       if (event.target?.result) {
         const content = event.target.result as string;
-        // Basic check for binary content
         if (content.includes('\0')) {
              setError("Dosya ikili (binary) veri içeriyor ve okunamıyor. Lütfen düz metin dosyası yükleyin.");
              return;
         }
         setRawCode(content);
+        setUploadedFileName(file.name);
       }
     };
     reader.onerror = () => {
@@ -95,16 +111,28 @@ export const ContributeModal: React.FC<ContributeModalProps> = ({ isOpen, onClos
       if (file) processFile(file);
   };
 
+  const extractCommandName = (code: string): string | null => {
+    const match = code.match(/\(defun\s+c:([a-zA-Z0-9_-]+)/i);
+    return match ? match[1].toUpperCase() : null;
+  };
+
   const normalizeCode = (code: string) => {
-      return code.replace(/\s+/g, '').toLowerCase();
+      // Remove comments (lines starting with ;)
+      const noComments = code.replace(/;.*$/gm, '');
+      // Remove whitespace and newlines
+      return noComments.replace(/\s+/g, '').toLowerCase();
   };
 
   const handleAnalyze = async () => {
+    if (currentLibrary.length >= MAX_LIBRARY_SIZE) {
+        setError(`Kapasite Dolu: Kütüphane limiti (${MAX_LIBRARY_SIZE}) doldu.`);
+        return;
+    }
+
     if (!rawCode.trim()) {
         setError("Lütfen kod giriniz. / Please enter code.");
         return;
     }
-    // Basic Input Sanitization
     if (rawCode.length > 20000) {
         setError("Kod bloğu çok uzun. Lütfen daha kısa bir parça deneyin.");
         return;
@@ -118,23 +146,45 @@ export const ContributeModal: React.FC<ContributeModalProps> = ({ isOpen, onClos
     setIsAnalyzing(true);
     setError(null);
     setDuplicateWarning(null);
+    setDuplicateReason(null);
 
     try {
       const result = await analyzeSubmittedCode(rawCode);
       if (result.error) {
-          throw new Error(result.error); // This catches the security error from backend
+          throw new Error(result.error);
       }
 
-      // DUPLICATE CHECK LOGIC
+      // DUPLICATE CHECK LOGIC (Enhanced)
       const incomingCodeNorm = normalizeCode(result.cleanedCode);
+      const incomingCommand = extractCommandName(result.cleanedCode);
+      
+      let reason = "";
       const foundDuplicate = currentLibrary.find(existing => {
-          const titleMatch = existing.title.toLowerCase() === result.title.toLowerCase();
-          const codeMatch = normalizeCode(existing.code) === incomingCodeNorm;
-          return titleMatch || codeMatch;
+          // 1. Command Name Match (Critical identifier for AutoLISP)
+          const existingCommand = extractCommandName(existing.code);
+          if (incomingCommand && existingCommand && incomingCommand === existingCommand) {
+              reason = `Komut adı çakışması: ${incomingCommand}`;
+              return true;
+          }
+
+          // 2. Logic Match (Normalized Code)
+          if (normalizeCode(existing.code) === incomingCodeNorm) {
+              reason = "Kod içeriği birebir aynı";
+              return true;
+          }
+
+          // 3. Title Match
+          if (existing.title.toLowerCase().trim() === result.title.toLowerCase().trim()) {
+              reason = "Başlık birebir aynı";
+              return true;
+          }
+          
+          return false;
       });
 
       if (foundDuplicate) {
           setDuplicateWarning(foundDuplicate);
+          setDuplicateReason(reason);
           setAnalysisResult(result); 
           setStep(2);
           return;
@@ -169,8 +219,10 @@ export const ContributeModal: React.FC<ContributeModalProps> = ({ isOpen, onClos
       onClose();
       setStep(1);
       setRawCode("");
+      setUploadedFileName(null);
       setAnalysisResult(null);
       setDuplicateWarning(null);
+      setDuplicateReason(null);
   };
 
   return (
@@ -237,21 +289,48 @@ export const ContributeModal: React.FC<ContributeModalProps> = ({ isOpen, onClos
                 className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer group relative
                     ${isDragging 
                         ? 'border-emerald-500 bg-emerald-900/20 scale-[1.02]' 
-                        : 'border-slate-700 hover:border-emerald-500/50 hover:bg-slate-800/50'
+                        : uploadedFileName 
+                             ? 'border-emerald-500/30 bg-emerald-950/10'
+                             : 'border-slate-700 hover:border-emerald-500/50 hover:bg-slate-800/50'
                     }
                 `}
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => !uploadedFileName && fileInputRef.current?.click()}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
               >
-                <div className={`bg-slate-800 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4 transition-transform ${!isDragging && 'group-hover:scale-110'}`}>
-                    <FileText size={32} className={isDragging ? "text-white" : "text-emerald-500"} />
-                </div>
-                <p className="text-slate-300 font-medium mb-1">
-                    {isDragging ? 'Dosyayı Buraya Bırakın' : 'Dosya Seç veya Sürükle (Max 50KB)'}
-                </p>
-                <p className="text-xs text-slate-500">Desteklenenler: .lsp, .mnl, .scr, .txt</p>
+                {uploadedFileName ? (
+                     <div className="flex flex-col items-center animate-in zoom-in duration-300">
+                         <div className="bg-emerald-500/20 p-3 rounded-full mb-2 ring-1 ring-emerald-500/50 shadow-lg shadow-emerald-900/40">
+                             <CheckCircle size={32} className="text-emerald-500" />
+                         </div>
+                         <h4 className="text-white font-bold text-sm">{uploadedFileName}</h4>
+                         <p className="text-emerald-400/70 text-xs mt-1">Dosya başarıyla yüklendi ve okundu.</p>
+                         <div className="mt-4 flex gap-2">
+                             <button 
+                                onClick={(e) => { 
+                                    e.stopPropagation(); 
+                                    setUploadedFileName(null); 
+                                    setRawCode(''); 
+                                    if (fileInputRef.current) fileInputRef.current.value = '';
+                                }}
+                                className="text-[10px] bg-red-500/10 hover:bg-red-500/20 text-red-400 px-3 py-1.5 rounded border border-red-500/20 transition-colors"
+                             >
+                                 Dosyayı Kaldır / Değiştir
+                             </button>
+                         </div>
+                     </div>
+                ) : (
+                    <>
+                        <div className={`bg-slate-800 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4 transition-transform ${!isDragging && 'group-hover:scale-110'}`}>
+                            <FileText size={32} className={isDragging ? "text-white" : "text-emerald-500"} />
+                        </div>
+                        <p className="text-slate-300 font-medium mb-1">
+                            {isDragging ? 'Dosyayı Buraya Bırakın' : 'Dosya Seç veya Sürükle (Max 50KB)'}
+                        </p>
+                        <p className="text-xs text-slate-500">Desteklenenler: .lsp, .mnl, .scr, .txt</p>
+                    </>
+                )}
                 <input 
                     type="file" 
                     ref={fileInputRef}
@@ -270,7 +349,10 @@ export const ContributeModal: React.FC<ContributeModalProps> = ({ isOpen, onClos
               {/* Text Area */}
               <textarea
                 value={rawCode}
-                onChange={(e) => setRawCode(e.target.value)}
+                onChange={(e) => {
+                    setRawCode(e.target.value);
+                    if (!e.target.value) setUploadedFileName(null);
+                }}
                 placeholder="(defun c:MyCommand ()...)"
                 className="w-full h-40 bg-slate-950 border border-slate-800 rounded-lg p-4 font-mono text-xs text-slate-300 focus:border-emerald-500/50 focus:outline-none"
                 maxLength={20000}
@@ -330,10 +412,17 @@ export const ContributeModal: React.FC<ContributeModalProps> = ({ isOpen, onClos
                                <p className="text-xs text-amber-200/70 mt-1">Bu LISP komutu zaten kütüphanemizde mevcut görünüyor.</p>
                            </div>
                        </div>
-                       <div className="bg-slate-950/50 p-3 rounded border border-amber-900/30 flex items-center justify-between">
-                           <span className="text-xs text-slate-400">Mevcut Kayıt:</span>
-                           <span className="text-sm font-bold text-white">{duplicateWarning.title}</span>
-                           <span className="text-[10px] bg-slate-800 px-2 py-1 rounded text-slate-400">Yazar: {duplicateWarning.author || 'Bilinmiyor'}</span>
+                       <div className="bg-slate-950/50 p-3 rounded border border-amber-900/30 flex flex-col gap-2">
+                           <div className="flex items-center justify-between">
+                               <span className="text-xs text-slate-400">Mevcut Kayıt:</span>
+                               <span className="text-sm font-bold text-white">{duplicateWarning.title}</span>
+                           </div>
+                           <div className="flex items-center justify-between text-[10px]">
+                                <span className="bg-slate-800 px-2 py-1 rounded text-slate-400">Yazar: {duplicateWarning.author || 'Bilinmiyor'}</span>
+                                <span className="text-amber-400 font-mono bg-amber-900/20 px-2 py-1 rounded border border-amber-900/30">
+                                    Sebep: {duplicateReason}
+                                </span>
+                           </div>
                        </div>
                    </div>
                 ) : (
@@ -379,7 +468,7 @@ export const ContributeModal: React.FC<ContributeModalProps> = ({ isOpen, onClos
           {step === 1 ? (
               <button 
                 onClick={handleAnalyze}
-                disabled={isAnalyzing}
+                disabled={isAnalyzing || currentLibrary.length >= MAX_LIBRARY_SIZE}
                 className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5 rounded-lg font-medium transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-emerald-900/20"
               >
                 {isAnalyzing ? <Loader2 size={18} className="animate-spin" /> : <Play size={18} />}
@@ -391,6 +480,7 @@ export const ContributeModal: React.FC<ContributeModalProps> = ({ isOpen, onClos
                     onClick={() => {
                         setStep(1);
                         setDuplicateWarning(null);
+                        setDuplicateReason(null);
                     }}
                     className="text-slate-400 hover:text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                 >

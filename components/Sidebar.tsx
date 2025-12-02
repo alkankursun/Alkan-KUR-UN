@@ -1,6 +1,6 @@
 
 import React, { useState, useRef } from 'react';
-import { Book, Terminal, Code2, ChevronRight, ChevronDown, Cpu, Search, Layers, Calculator, Type, Box, PenTool, UploadCloud, User, Download, Grid, Database, Save, Upload } from 'lucide-react';
+import { Book, Terminal, Code2, ChevronRight, ChevronDown, Cpu, Search, Layers, Calculator, Type, Box, PenTool, UploadCloud, User, Download, Grid, Database, Save, Upload, Github, ExternalLink } from 'lucide-react';
 import { LispSnippet } from '../types';
 
 interface SidebarProps {
@@ -53,10 +53,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ library, onSelectSnippet, onSe
   // Internal example prompts
   const examplePrompts = [
     "Tüm layerları '0' yap ve purge et",
+    "Visual LISP ile blok özelliklerini listele",
     "Seçilen çizgilerin toplam uzunluğunu hesapla",
-    "Layer isminde 'DUVAR' geçen objeleri seç",
-    "Seçilen text objelerine önek (prefix) ekle",
-    "Otomatik artan numaralandırma komutu yaz"
+    "VS Code Extension uyumlu Snippet oluştur",
+    "DCL Arayüzlü Metraj Hesabı"
   ];
 
   return (
@@ -80,7 +80,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ library, onSelectSnippet, onSe
           </div>
           <div>
             <h1 className="font-bold text-lg text-white tracking-tight">AutoLISP Gen</h1>
-            <p className="text-xs text-slate-400">AI Powered CAD Tools</p>
+            <p className="text-xs text-slate-400">AI Powered & VS Code Ready</p>
           </div>
         </div>
 
@@ -119,8 +119,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ library, onSelectSnippet, onSe
           {/* Global Library Render */}
           <div>
             <h3 className="px-2 mb-2 text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center justify-between">
-              <span className="flex items-center gap-2"><Book size={14} /> Global Kütüphane</span>
-              <span className="bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded text-[10px]">{filteredLibrary.length}</span>
+              <span className="flex items-center gap-2"><Book size={14} /> Kütüphane</span>
+              <span className="bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded text-[10px] font-mono" title="Kayıtlı / Toplam Kapasite">
+                  {library.length} / 999
+              </span>
             </h3>
             
             {filteredLibrary.length === 0 ? (
@@ -222,6 +224,27 @@ export const Sidebar: React.FC<SidebarProps> = ({ library, onSelectSnippet, onSe
                 </div>
             </div>
           )}
+
+          {/* Official Resources Link */}
+          <div className="px-2 pt-2">
+             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 space-y-2">
+                <h4 className="text-xs font-bold text-slate-400 flex items-center gap-2">
+                    <Github size={12} /> Resmi Kaynaklar
+                </h4>
+                <a 
+                  href="https://github.com/Autodesk-AutoCAD/AutoLispExt" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-[10px] text-blue-400 hover:text-blue-300 hover:underline transition-colors"
+                >
+                   <ExternalLink size={10} />
+                   Autodesk AutoLISP VS Code Ext.
+                </a>
+                <p className="text-[9px] text-slate-500">
+                    Bu uygulama, resmi Autodesk VS Code eklenti standartlarını destekler.
+                </p>
+             </div>
+          </div>
 
           {/* Data Management & Info */}
           <div className="space-y-3 pb-6">
